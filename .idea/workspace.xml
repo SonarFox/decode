@@ -5,22 +5,44 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="c92cd61f-8bfd-4abc-86da-813043720126" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/CodeInterpreter.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/code_analyzer_ollama.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/code_analyzer.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/edge_cases.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/flowchart_graphical.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/flowchart_text.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/key_components.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/metaphor_analogy.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/simple_summary.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/code_analyzer_ollama.py" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;SonarFox&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/SonarFox/decode.git&quot;,
+    &quot;accountId&quot;: &quot;48741b18-305e-4ca4-b5b3-f818cb6b4790&quot;
+  }
+}</component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 5
 }</component>
@@ -37,7 +59,7 @@
   }
 }</component>
   <component name="RunManager">
-    <configuration name="code_analyzer_ollama" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
+    <configuration name="code_analyzer" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="CodeInterpreter" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -50,7 +72,7 @@
       <option name="IS_MODULE_SDK" value="true" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/code_analyzer_ollama.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/code_analyzer.py" />
       <option name="PARAMETERS" value="" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
