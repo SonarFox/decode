@@ -3,6 +3,7 @@ import os
 import ollama
 import graphviz # Requires graphviz Python library and system installation
 import sys      # For stderr
+import re       # Import regular expressions for more flexible cleanup
 
 try:
     import google.generativeai as genai
@@ -91,7 +92,7 @@ DOT Language Output:
                 options={'temperature': 0.1} # Low temperature for structured output
             )
             if response and hasattr(response, 'message') and hasattr(response.message, 'content'):
-                dot_source = response.message.content.strip()
+                dot_source = response.message.content # Get raw content first
             else:
                 return f"Error [flowchart_graphical]: Unexpected Ollama response structure. Raw: {response}"
 
@@ -112,8 +113,8 @@ DOT Language Output:
             elif response and hasattr(response, 'parts') and response.parts:
                  explanation_text = "".join(part.text for part in response.parts if hasattr(part, 'text'))
 
-            if explanation_text and explanation_text.strip():
-                dot_source = explanation_text.strip()
+            if explanation_text: # Check if we got any text
+                dot_source = explanation_text # Get raw content first
             else: # Handle empty/blocked response
                  feedback_info = ""
                  try:
@@ -125,30 +126,48 @@ DOT Language Output:
         else:
             return f"Error [flowchart_graphical]: Unknown provider '{provider}'."
 
-        # Clean up potential markdown fences or language specifiers from LLM output
-        if dot_source.startswith("```dot"):
-            dot_source = dot_source.removeprefix("```dot").strip()
-        elif dot_source.startswith("```"):
-             dot_source = dot_source.removeprefix("```").strip()
-        if dot_source.endswith("```"):
-            dot_source = dot_source.removesuffix("```").strip()
+        # *** MODIFIED CLEANUP SECTION ***
+        # Strip leading/trailing whitespace first
+        cleaned_source = dot_source.strip()
 
-        # Basic validation: Check if it looks like DOT
-        if not dot_source.strip().startswith('digraph'):
-            print(f"Warning [flowchart_graphical]: LLM output doesn't look like DOT language:\n---\n{dot_source}\n---", file=sys.stderr)
-            return f"Error [flowchart_graphical]: LLM did not return valid DOT language. Output started with: '{dot_source[:50]}...'"
+        # Remove potential markdown fences (```dot or ```)
+        if cleaned_source.startswith("```dot"):
+            cleaned_source = cleaned_source.removeprefix("```dot").strip()
+        elif cleaned_source.startswith("```"):
+             cleaned_source = cleaned_source.removeprefix("```").strip()
+        if cleaned_source.endswith("```"):
+            cleaned_source = cleaned_source.removesuffix("```").strip()
+
+        # Remove known introductory phrases (case-insensitive check)
+        intro_phrases = [
+            "here is the dot language code block:",
+            "dot language output:",
+            "dot output:",
+        ]
+        # Use regex for more robust matching of intro lines possibly followed by newlines
+        for phrase in intro_phrases:
+             # Match phrase at the beginning, ignore case, allow optional colon and whitespace/newlines after
+             pattern = re.compile(r"^\s*" + re.escape(phrase) + r"\s*:?\s*", re.IGNORECASE | re.MULTILINE)
+             cleaned_source = pattern.sub("", cleaned_source, count=1) # Replace only the first occurrence
+
+
+        # Final strip after potential removals
+        cleaned_source = cleaned_source.strip()
+        # *** END OF MODIFIED CLEANUP SECTION ***
+
+
+        # Basic validation: Check if the cleaned source looks like DOT
+        if not cleaned_source.startswith('digraph'):
+            print(f"Warning [flowchart_graphical]: LLM output after cleanup doesn't look like DOT language:\n---\n{cleaned_source}\n---", file=sys.stderr)
+            print(f"Original LLM output was:\n---\n{dot_source}\n---", file=sys.stderr) # Show original for comparison
+            return f"Error [flowchart_graphical]: LLM did not return valid DOT language after cleanup. Cleaned output started with: '{cleaned_source[:50]}...'"
 
         # --- Step 2: Render DOT source using Graphviz ---
         print(f"Explainer [flowchart_graphical]: Rendering DOT source to {OUTPUT_FILENAME}.{OUTPUT_FORMAT}...")
         try:
-            # Create graph from source. This might raise exceptions if DOT is invalid.
-            # Specify format and engine (dot is default for flowcharts)
-            graph = graphviz.Source(dot_source, filename=OUTPUT_FILENAME, format=OUTPUT_FORMAT, engine='dot')
-
-            # Render the graph to a file. This executes the Graphviz command-line tool.
-            # It will create OUTPUT_FILENAME and OUTPUT_FILENAME.OUTPUT_FORMAT
-            # The cleanup=True option removes the intermediate .gv source file.
-            output_path = graph.render(cleanup=True, view=False) # view=False prevents auto-opening
+            # Use the cleaned source
+            graph = graphviz.Source(cleaned_source, filename=OUTPUT_FILENAME, format=OUTPUT_FORMAT, engine='dot')
+            output_path = graph.render(cleanup=True, view=False)
 
             print(f"Explainer [flowchart_graphical]: Successfully rendered flowchart.")
             return f"Success: Graphical flowchart saved to: {output_path}"
@@ -159,12 +178,11 @@ DOT Language Output:
             print("Installation guide: https://graphviz.org/download/", file=sys.stderr)
             return "Error: Graphviz executable not found. Please install Graphviz system-wide."
         except Exception as render_err:
-            # Catch other potential errors during rendering (e.g., invalid DOT syntax)
             print(f"Error [flowchart_graphical]: Failed to render DOT source: {render_err}", file=sys.stderr)
-            print(f"--- DOT Source Attempted ---\n{dot_source}\n--------------------------", file=sys.stderr)
+            # Print the cleaned source that caused the error
+            print(f"--- Cleaned DOT Source Attempted ---\n{cleaned_source}\n--------------------------", file=sys.stderr)
             return f"Error: Failed to render flowchart image. Details: {render_err}"
 
     except Exception as e:
-        # Catch errors during the LLM call itself
         return f"Error [flowchart_graphical]: Exception during LLM call ({provider}, model: {model_name}) for DOT source: {type(e).__name__}: {e}"
 

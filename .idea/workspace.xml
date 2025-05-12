@@ -5,16 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="c92cd61f-8bfd-4abc-86da-813043720126" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/code_analyzer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/explainers/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/explainers/edge_cases.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/explainers/flowchart_graphical.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/explainers/flowchart_text.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/explainers/key_components.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/explainers/metaphor_analogy.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/explainers/simple_summary.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/code_analyzer_ollama.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/explainers/flowchart_graphical.py" beforeDir="false" afterPath="$PROJECT_DIR$/explainers/flowchart_graphical.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
