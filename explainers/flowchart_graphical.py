@@ -14,6 +14,9 @@ except ImportError:
 # Define the output filename (can be made configurable later)
 OUTPUT_FILENAME = "flowchart_output"
 OUTPUT_FORMAT = "png" # Or 'svg', 'pdf', etc.
+# Add a flag to indicate if graphviz is required by this explainer
+REQUIRES_GRAPHVIZ = True
+
 
 def explain(base_explanation, llm_client, model_name, provider, original_code, **kwargs):
     """
@@ -53,10 +56,9 @@ Represent the typical execution flow identified in the analysis. Use standard DO
 {original_code}
 --- Original Source Code End ---
 
-Provide *only* the DOT language code block. Do not include explanations, backticks, or the word 'dot'. Start directly with `digraph G {{`.
+Provide *only* the DOT language code block itself, starting directly with `digraph G {{` and ending with `}}`. Do not include any other explanatory text, markdown formatting like backticks, or the word 'dot' outside the code block.
 
-Example DOT Output:
-```dot
+Example of the exact output format expected:
 digraph G {{
   rankdir=TB; // Top-to-bottom flow
   node [shape=box, style=rounded]; // Default node shape
@@ -75,12 +77,11 @@ digraph G {{
   process_data -> end_process;
   log_error -> end_process;
 }}
-```
 
 DOT Language Output:
 """
 
-    dot_source = ""
+    dot_source_from_llm = ""
     try:
         # --- Step 1: Get DOT source from LLM ---
         if provider == 'ollama':
@@ -92,7 +93,7 @@ DOT Language Output:
                 options={'temperature': 0.1} # Low temperature for structured output
             )
             if response and hasattr(response, 'message') and hasattr(response.message, 'content'):
-                dot_source = response.message.content # Get raw content first
+                dot_source_from_llm = response.message.content # Get raw content first
             else:
                 return f"Error [flowchart_graphical]: Unexpected Ollama response structure. Raw: {response}"
 
@@ -114,7 +115,7 @@ DOT Language Output:
                  explanation_text = "".join(part.text for part in response.parts if hasattr(part, 'text'))
 
             if explanation_text: # Check if we got any text
-                dot_source = explanation_text # Get raw content first
+                dot_source_from_llm = explanation_text # Get raw content first
             else: # Handle empty/blocked response
                  feedback_info = ""
                  try:
@@ -127,40 +128,43 @@ DOT Language Output:
             return f"Error [flowchart_graphical]: Unknown provider '{provider}'."
 
         # *** MODIFIED CLEANUP SECTION ***
-        # Strip leading/trailing whitespace first
-        cleaned_source = dot_source.strip()
+        # Use regex to extract content within ```dot ... ``` or ``` ... ```
+        # This pattern looks for ``` optionally followed by 'dot', then captures everything until the next ```
+        # It uses re.DOTALL so that '.' matches newlines.
+        match = re.search(r"```(?:dot)?\s*(.*?)\s*```", dot_source_from_llm, re.DOTALL)
+        cleaned_source = ""
+        if match:
+            cleaned_source = match.group(1).strip()
+        else:
+            # If no markdown fences are found, try to find 'digraph G {' directly
+            # This handles cases where the LLM might output DOT code without fences
+            # but with surrounding text.
+            digraph_match = re.search(r"(digraph\s+\w+\s*\{.*?\})", dot_source_from_llm, re.DOTALL | re.IGNORECASE)
+            if digraph_match:
+                cleaned_source = digraph_match.group(1).strip()
+            else:
+                # As a last resort, if no fences and no direct digraph match,
+                # try the previous cleanup for introductory lines (less reliable).
+                temp_cleaned_source = dot_source_from_llm.strip()
+                intro_phrases = [
+                    "here is the dot language code block representing the typical execution flow identified in the analysis:",
+                    "here is the dot language code block:",
+                    "dot language output:",
+                    "dot output:",
+                ]
+                for phrase in intro_phrases:
+                    pattern = re.compile(r"^\s*" + re.escape(phrase) + r"\s*:?\s*", re.IGNORECASE | re.MULTILINE)
+                    temp_cleaned_source = pattern.sub("", temp_cleaned_source, count=1).strip()
+                cleaned_source = temp_cleaned_source # Use this less reliable cleanup if others fail
 
-        # Remove potential markdown fences (```dot or ```)
-        if cleaned_source.startswith("```dot"):
-            cleaned_source = cleaned_source.removeprefix("```dot").strip()
-        elif cleaned_source.startswith("```"):
-             cleaned_source = cleaned_source.removeprefix("```").strip()
-        if cleaned_source.endswith("```"):
-            cleaned_source = cleaned_source.removesuffix("```").strip()
-
-        # Remove known introductory phrases (case-insensitive check)
-        intro_phrases = [
-            "here is the dot language code block:",
-            "dot language output:",
-            "dot output:",
-        ]
-        # Use regex for more robust matching of intro lines possibly followed by newlines
-        for phrase in intro_phrases:
-             # Match phrase at the beginning, ignore case, allow optional colon and whitespace/newlines after
-             pattern = re.compile(r"^\s*" + re.escape(phrase) + r"\s*:?\s*", re.IGNORECASE | re.MULTILINE)
-             cleaned_source = pattern.sub("", cleaned_source, count=1) # Replace only the first occurrence
-
-
-        # Final strip after potential removals
-        cleaned_source = cleaned_source.strip()
         # *** END OF MODIFIED CLEANUP SECTION ***
 
 
         # Basic validation: Check if the cleaned source looks like DOT
         if not cleaned_source.startswith('digraph'):
             print(f"Warning [flowchart_graphical]: LLM output after cleanup doesn't look like DOT language:\n---\n{cleaned_source}\n---", file=sys.stderr)
-            print(f"Original LLM output was:\n---\n{dot_source}\n---", file=sys.stderr) # Show original for comparison
-            return f"Error [flowchart_graphical]: LLM did not return valid DOT language after cleanup. Cleaned output started with: '{cleaned_source[:50]}...'"
+            print(f"Original LLM output was:\n---\n{dot_source_from_llm}\n---", file=sys.stderr) # Show original for comparison
+            return f"Error [flowchart_graphical]: LLM did not return valid DOT language after cleanup. Cleaned output started with: '{cleaned_source[:70]}...'"
 
         # --- Step 2: Render DOT source using Graphviz ---
         print(f"Explainer [flowchart_graphical]: Rendering DOT source to {OUTPUT_FILENAME}.{OUTPUT_FORMAT}...")

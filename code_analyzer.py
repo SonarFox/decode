@@ -5,6 +5,7 @@ import importlib # For dynamic module loading
 import importlib.util
 import ollama
 import requests # Used only for checking Ollama server reachability
+import re       # For cleaning up LLM output
 # Only import genai if needed
 try:
     import google.generativeai as genai
@@ -14,6 +15,12 @@ except ImportError:
     # Define a placeholder if not available, so checks don't fail
     class GenaiPlaceholder: pass
     genai = GenaiPlaceholder()
+# Import graphviz only if needed by an explainer
+try:
+    import graphviz
+    GRAPHVIZ_AVAILABLE = True
+except ImportError:
+    GRAPHVIZ_AVAILABLE = False
 
 
 # --- Configuration ---
@@ -22,12 +29,18 @@ DEFAULT_OLLAMA_MODEL = "llama3"
 DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
 GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY"
 DEFAULT_EXPLAINER_DIR = "explainers" # Subdirectory for explainer modules
+# Define supported file extensions for analysis (lowercase)
+SUPPORTED_EXTENSIONS = (
+    '.py', '.java', '.js', '.ts', '.go', '.rb', '.php', '.cpp', '.c', '.h',
+    '.cs', '.rs', '.swift', '.kt', '.scala', '.pl', '.pm', '.sh', '.bash',
+    '.html', '.css', '.sql', '.md', '.txt', '.json', '.yaml', '.yml', '.xml'
+)
 
 # --- Helper Functions ---
 
 def check_ollama_server(host=OLLAMA_HOST):
     """Checks if the Ollama server is running and reachable."""
-    # (Function remains the same as previous version)
+    # (Function remains the same)
     print(f"Checking for Ollama server at {host}...")
     try:
         response = requests.get(host, timeout=5)
@@ -45,29 +58,85 @@ def check_ollama_server(host=OLLAMA_HOST):
         print(f"Error: An issue occurred while checking Ollama server: {e}", file=sys.stderr)
         return False
 
-def read_source_file(file_path):
-    """Reads the content of the specified source code file."""
-    # (Function remains the same as previous version)
-    print(f"Reading source code from: {file_path}")
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Error: File not found at '{file_path}'")
-    if not os.path.isfile(file_path):
-         raise ValueError(f"Error: Path '{file_path}' is not a file.")
+# *** MODIFIED FUNCTION: Renamed and handles directories ***
+def read_source_path(source_path):
+    """
+    Reads content from a single file or all supported files in a directory.
+    Skips hidden files/directories and handles potential encoding errors.
+    Returns the combined code content as a string and a list of processed file paths.
+    """
+    all_code = ""
+    files_processed = []
+    base_path = os.path.abspath(source_path) # Get absolute path for clarity
 
-    try:
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        if not content.strip():
-             print(f"Warning: File '{file_path}' is empty or contains only whitespace.", file=sys.stderr)
-             return None
-        print(f"Successfully read {len(content)} characters.")
-        return content
-    except Exception as e:
-        raise IOError(f"Error reading file '{file_path}': {e}")
+    print(f"Reading source code from: {base_path}")
+    if not os.path.exists(base_path):
+        raise FileNotFoundError(f"Error: Source path not found at '{base_path}'")
+
+    if os.path.isfile(base_path):
+        # Handle single file input
+        filename_lower = base_path.lower()
+        if any(filename_lower.endswith(ext) for ext in SUPPORTED_EXTENSIONS):
+            try:
+                with open(base_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    all_code = f.read()
+                files_processed.append(base_path)
+                print(f"Read file: {base_path}")
+            except Exception as e:
+                print(f"Warning: Could not read file {base_path}: {e}", file=sys.stderr)
+        else:
+            print(f"Warning: File '{base_path}' does not have a supported extension ({', '.join(SUPPORTED_EXTENSIONS)}). Skipping.", file=sys.stderr)
+
+    elif os.path.isdir(base_path):
+        # Handle directory input
+        print(f"Reading supported files from directory: {base_path}")
+        for root, dirs, files in os.walk(base_path, topdown=True):
+            # Skip hidden directories (like .git, .venv, .vscode, __pycache__)
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
+            files = [f for f in files if not f.startswith('.')] # Skip hidden files
+
+            # Sort files for consistent order (optional)
+            files.sort()
+
+            for filename in files:
+                filename_lower = filename.lower()
+                if any(filename_lower.endswith(ext) for ext in SUPPORTED_EXTENSIONS):
+                    file_path = os.path.join(root, filename)
+                    relative_path = os.path.relpath(file_path, base_path)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            print(f"  - Reading: {relative_path}")
+                            content = f.read()
+                            # Add a separator/header including relative path for context
+                            # Only add separator if there's already content
+                            if all_code:
+                                all_code += "\n\n" + "="*20 + f" Content from: {relative_path} " + "="*20 + "\n\n"
+                            else:
+                                all_code += "="*20 + f" Content from: {relative_path} " + "="*20 + "\n\n"
+                            all_code += content
+                        files_processed.append(file_path)
+                    except Exception as e:
+                        # Warn but continue processing other files
+                        print(f"Warning: Could not read file {file_path}: {e}", file=sys.stderr)
+        if not files_processed:
+             print(f"Warning: No supported files ({', '.join(SUPPORTED_EXTENSIONS)}) found in directory '{base_path}'.", file=sys.stderr)
+
+    else:
+        # Handle cases where the path is neither a file nor a directory
+        raise ValueError(f"Error: Source path '{base_path}' is neither a file nor a directory.")
+
+    if not all_code.strip():
+         # Check if any actual code content was read after processing
+         print("Warning: No code content was successfully read.", file=sys.stderr)
+         return None, [] # Return None for code, empty list for files
+
+    # Return the concatenated code and the list of files it came from
+    return all_code, files_processed
+# *** END OF MODIFIED FUNCTION ***
 
 def select_explanation_format(available_explainers):
     """Prompts the user to select the desired explanation format from discovered explainers."""
-    # (Function remains the same as previous version)
+    # (Function remains the same)
     print("\nSelect how you want the code to be explained:")
     explainer_map = {}
     default_choice_num = None
@@ -87,13 +156,13 @@ def select_explanation_format(available_explainers):
         explainer_map[i] = name
 
     if not explainer_map:
-        print("Error: No explanation formats found!", file=sys.stderr)
+        print("Error: No explanation formats (explainers) found!", file=sys.stderr)
         sys.exit(1)
 
     while True:
         try:
-            default_prompt = f" [default: {default_choice_num} ({default_explainer_name})]" if default_choice_num else ""
-            choice_str = input(f"Enter your choice (1-{len(explainer_map)}){default_prompt}: ")
+            default_prompt_text = f" [default: {default_choice_num} ({default_explainer_name.replace('_', ' ').title()})]" if default_choice_num else ""
+            choice_str = input(f"Enter your choice (1-{len(explainer_map)}){default_prompt_text}: ")
 
             if not choice_str and default_choice_num is not None:
                 return explainer_map[default_choice_num]
@@ -111,7 +180,7 @@ def select_explanation_format(available_explainers):
 
 def discover_explainers(explainer_dir):
     """Discovers available explainer modules in the specified directory."""
-    # (Function remains the same as previous version)
+    # (Function remains the same)
     explainers = {}
     if not os.path.isdir(explainer_dir):
         print(f"Warning: Explainer directory '{explainer_dir}' not found.", file=sys.stderr)
@@ -136,8 +205,13 @@ def discover_explainers(explainer_dir):
                         module = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(module)
                         if hasattr(module, 'explain'):
-                            explainers[module_name] = import_path
-                            print(f"  - Found valid explainer: '{module_name}'")
+                            # Check if explainer requires graphviz and if it's available
+                            requires_graphviz = getattr(module, 'REQUIRES_GRAPHVIZ', False)
+                            if requires_graphviz and not GRAPHVIZ_AVAILABLE:
+                                print(f"  - Skipping explainer '{module_name}': Requires Graphviz library, which is not installed.")
+                            else:
+                                explainers[module_name] = import_path
+                                print(f"  - Found valid explainer: '{module_name}'")
                         else:
                             print(f"Warning: Module '{import_path}' missing 'explain' function. Skipping.", file=sys.stderr)
                     else:
@@ -154,7 +228,7 @@ def discover_explainers(explainer_dir):
 
 def run_explainer(explainer_name, import_path, base_explanation, **kwargs):
     """Loads and runs the specified explainer module's 'explain' function."""
-    # (Function remains the same as previous version)
+    # (Function remains the same)
     try:
         print(f"\n--- Applying Explainer: {explainer_name} ---")
         explainer_module = importlib.import_module(import_path)
@@ -182,13 +256,14 @@ def run_explainer(explainer_name, import_path, base_explanation, **kwargs):
 
 def get_base_explanation_with_ollama(code_content, model_name, ollama_host):
     """Sends code to Ollama and asks for a general, detailed base explanation."""
+    # (Function remains the same)
     if not code_content:
         return "Error: No code content provided to explain."
 
     prompt = f"""
-Please analyze the following source code in detail. Provide a comprehensive explanation covering:
-1. The overall purpose and main functionality.
-2. Key components (functions, classes, modules).
+Please analyze the following source code (which may consist of multiple concatenated files) in detail. Provide a comprehensive explanation covering:
+1. The overall purpose and main functionality of the combined code.
+2. Key components (functions, classes, modules) across the different files if applicable.
 3. How the components interact or the general execution flow.
 4. Any notable inputs or outputs.
 
@@ -208,22 +283,18 @@ Detailed Explanation:
         )
         print("--- Base Explanation Received from Ollama ---")
 
-        # *** FIXED SECTION FOR OLLAMA RESPONSE OBJECT ***
-        # Check if the response object exists and has the expected attributes
         if response and hasattr(response, 'message') and \
            hasattr(response.message, 'content'):
             content = response.message.content
             if not content or not content.strip():
                  print("Warning: Ollama returned an empty base explanation.", file=sys.stderr)
-                 print(f"Raw response object was: {response}", file=sys.stderr) # Print object representation
+                 print(f"Raw response object was: {response}", file=sys.stderr)
                  return "Error: Received empty explanation from Ollama."
-            return content # Success! Return the content string
+            return content
         else:
-            # If structure is unexpected, print the raw response object and return an error
             print(f"Error: Unexpected response structure received from Ollama.", file=sys.stderr)
-            print(f"Raw response object received: {response}", file=sys.stderr) # Print object representation
+            print(f"Raw response object received: {response}", file=sys.stderr)
             return f"Error: Could not extract base explanation from Ollama response object. Raw response: {response}"
-        # *** END OF FIXED SECTION ***
 
     except ollama.ResponseError as e:
         print(f"\nOllama API Error: {e.status_code}", file=sys.stderr)
@@ -241,7 +312,7 @@ Detailed Explanation:
 
 def get_base_explanation_with_gemini(code_content, model_name, api_key):
     """Sends code to Gemini API and asks for a general, detailed base explanation."""
-    # (Function remains the same as previous version - check availability)
+    # (Function remains the same)
     if not GEMINI_AVAILABLE:
         return "Error: Gemini library ('google-generativeai') not installed. Cannot use Gemini provider."
     if not code_content:
@@ -250,9 +321,9 @@ def get_base_explanation_with_gemini(code_content, model_name, api_key):
         return f"Error: Gemini API key not found. Please set the {GEMINI_API_KEY_ENV_VAR} environment variable or use the --api-key argument."
 
     prompt = f"""
-Please analyze the following source code in detail. Provide a comprehensive explanation covering:
-1. The overall purpose and main functionality.
-2. Key components (functions, classes, modules).
+Please analyze the following source code (which may consist of multiple concatenated files) in detail. Provide a comprehensive explanation covering:
+1. The overall purpose and main functionality of the combined code.
+2. Key components (functions, classes, modules) across the different files if applicable.
 3. How the components interact or the general execution flow.
 4. Any notable inputs or outputs.
 
@@ -271,26 +342,23 @@ Detailed Explanation:
         print("--- Base Explanation Received from Gemini ---")
 
         explanation_text = ""
-        # Prioritize accessing response.text if available
         if response and hasattr(response, 'text'):
             explanation_text = response.text
-        # Fallback for potential multi-part responses
         elif response and hasattr(response, 'parts') and response.parts:
              explanation_text = "".join(part.text for part in response.parts if hasattr(part, 'text'))
 
         if explanation_text and explanation_text.strip():
              return explanation_text
         else:
-             # Handle empty or blocked responses
              print(f"Warning: Gemini returned an empty or potentially blocked response.", file=sys.stderr)
-             try: # Attempt to print safety feedback
+             try:
                  print(f"Gemini prompt feedback: {response.prompt_feedback}", file=sys.stderr)
                  if hasattr(response, 'candidates') and response.candidates:
                       print(f"Gemini candidate finish reason: {response.candidates[0].finish_reason}", file=sys.stderr)
                       print(f"Gemini candidate safety ratings: {response.candidates[0].safety_ratings}", file=sys.stderr)
              except Exception as feedback_err:
                  print(f"(Could not retrieve detailed feedback: {feedback_err})", file=sys.stderr)
-             return f"Error: Could not extract valid base explanation from Gemini response (check for safety blocks or empty content). Raw response excerpt: {str(response)[:200]}..." # Show limited raw response
+             return f"Error: Could not extract valid base explanation from Gemini response (check for safety blocks or empty content). Raw response excerpt: {str(response)[:200]}..."
 
     except Exception as e:
         print(f"\nError during Gemini interaction: {type(e).__name__}: {e}", file=sys.stderr)
@@ -300,13 +368,14 @@ Detailed Explanation:
 if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(
-        description="Explain a source code file using a selected LLM and explanation format."
+        description="Explain source code from a file or directory using a selected LLM and explanation format."
     )
+    # *** MODIFIED ARGUMENT: Path can be file or directory ***
     parser.add_argument(
-        "file_path",
-        help="Path to the source code file to explain."
+        "source_path",
+        help="Path to the source code file OR directory to analyze."
     )
-    # Add provider choices dynamically based on availability
+    # (Other arguments remain the same)
     provider_choices = ['ollama']
     if GEMINI_AVAILABLE:
         provider_choices.append('gemini')
@@ -354,7 +423,7 @@ if __name__ == "__main__":
     if args.model is None:
         args.model = DEFAULT_OLLAMA_MODEL if args.provider == 'ollama' else DEFAULT_GEMINI_MODEL
 
-    gemini_api_key = args.api_key or os.getenv(GEMINI_API_KEY_ENV_VAR)
+    gemini_api_key_resolved = args.api_key or os.getenv(GEMINI_API_KEY_ENV_VAR)
 
     # --- Workflow ---
     final_explanation = ""
@@ -368,32 +437,34 @@ if __name__ == "__main__":
             print(f"Error: No valid explainers found in '{explainer_path}'. Exiting.", file=sys.stderr)
             sys.exit(1)
 
-        # Step 2: Read the source code file
-        source_code = read_source_file(args.file_path)
-        if not source_code:
-            print("\nExiting: No code content read from the file.", file=sys.stderr)
+        # *** MODIFIED STEP: Use new read_source_path function ***
+        # Step 2: Read the source code from file or directory
+        source_code, processed_files = read_source_path(args.source_path)
+        if not source_code: # Check if read_source_path returned None
+            print("\nExiting: No code content read from the specified path.", file=sys.stderr)
             sys.exit(1)
+        print(f"\nSuccessfully read {len(processed_files)} file(s). Total code length: {len(source_code)} characters.")
+        # *** END OF MODIFIED STEP ***
+
 
         # Step 3: Get the base explanation from the selected LLM provider
         base_explanation = ""
-        llm_client = None # Placeholder for potential future use in explainers
+        llm_client = None
         if args.provider == 'ollama':
             if not check_ollama_server(args.host):
                 sys.exit(1)
             base_explanation = get_base_explanation_with_ollama(source_code, args.model, args.host)
-            try: # Store client if needed later
+            try:
                  llm_client = ollama.Client(host=args.host)
             except Exception as client_err:
                  print(f"Warning: Could not re-initialize Ollama client for explainer context: {client_err}", file=sys.stderr)
                  llm_client = None
         elif args.provider == 'gemini':
-            base_explanation = get_base_explanation_with_gemini(source_code, args.model, gemini_api_key)
-            # No separate client object needed for current gemini usage pattern
+            base_explanation = get_base_explanation_with_gemini(source_code, args.model, gemini_api_key_resolved)
 
-        # Check if base explanation failed
         if base_explanation.startswith("Error:"):
             print(f"\nFailed to get base explanation from {args.provider.upper()}.", file=sys.stderr)
-            print(f"Reason: {base_explanation}", file=sys.stderr) # Print the detailed error
+            print(f"Reason: {base_explanation}", file=sys.stderr)
             sys.exit(1)
 
         # Step 4: Get user's choice for explanation format
@@ -406,9 +477,13 @@ if __name__ == "__main__":
             explainer_kwargs = {
                 "llm_client": llm_client,
                 "model_name": args.model,
-                "original_code": source_code,
-                "provider": args.provider # Pass provider name too
+                "original_code": source_code, # Pass the (potentially large) combined code
+                "provider": args.provider,
+                "processed_files": processed_files # Pass the list of files that were read
             }
+            if args.provider == 'gemini':
+                explainer_kwargs["api_key"] = gemini_api_key_resolved
+
             final_explanation = run_explainer(
                 selected_explainer_name,
                 explainer_import_path,
@@ -422,11 +497,8 @@ if __name__ == "__main__":
 
         # Step 6: Print the final explanation from the explainer
         print("\n--- Final Code Explanation ---")
-        # Check if the explainer itself returned an error
         if final_explanation.startswith("Error:"):
              print(final_explanation, file=sys.stderr)
-             # Optionally decide whether to exit with error if explainer fails
-             # sys.exit(1)
         else:
              print(final_explanation)
 
@@ -436,8 +508,8 @@ if __name__ == "__main__":
         sys.exit(1)
     except Exception as e:
         print(f"\nAn unexpected error occurred: {type(e).__name__}: {e}", file=sys.stderr)
-        import traceback # Uncomment for debugging
-        traceback.print_exc() # Uncomment for debugging
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
     print("\nScript finished.")
