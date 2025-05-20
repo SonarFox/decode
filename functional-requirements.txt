@@ -1,0 +1,53 @@
+* DBUtils: Provides methods for querying a database (e.g., finding users or items) using JDBC.
+* SessionHeader: Represents a session header with username and session ID attributes.
+* Utils: Offers various utility methods for generating keys, deleting files, executing JavaScript code, and encrypting data.
+* WebUtils: Handles cookie management and retrieves the current session ID from an HTTP request.
+
+**Key Components (Functions, Classes, Modules):**
+
+1. DBUtils:
+	* `DBUtils` class with constructor that establishes a database connection using JDBC.
+	* `findUsers` method for retrieving users based on username.
+	* `findItem` method for finding items by item ID.
+2. SessionHeader:
+	* `SessionHeader` class implementing the `Serializable` interface.
+	* Constructor initializes attributes (username and session ID).
+	* Getter and setter methods for accessing attributes.
+3. Utils:
+	* `generateKey` method generates a key pair using RSA algorithm.
+	* `deleteFile` method deletes a file using Apache Commons IO.
+	* `executeJs` method executes JavaScript code using ScriptEngine.
+	* `encrypt` method encrypts data using AES-GCM algorithm (noncompliant as it is not properly initialized).
+4. WebUtils:
+	* `addCookie` method adds a cookie to an HTTP response.
+	* `getSessionId` method retrieves the current session ID from an HTTP request and sends it over a socket connection.
+
+**Interaction or Execution Flow:**
+
+The components interact with each other in the following ways:
+
+1. DBUtils:
+	* Establishes a database connection in its constructor.
+	* Uses this connection to execute queries (e.g., `findUsers` and `findItem`) methods.
+2. SessionHeader:
+	* No direct interaction with other components, but is used as an object instance in the code.
+3. Utils:
+	* Generates keys for encryption.
+	* Deletes files using Apache Commons IO.
+	* Executes JavaScript code using ScriptEngine.
+4. WebUtils:
+	* Adds cookies to HTTP responses.
+	* Retrieves session IDs from HTTP requests and sends them over a socket connection.
+
+**Notable Inputs or Outputs:**
+
+Some notable inputs and outputs in the code include:
+
+1. DBUtils:
+	* Usernames and item IDs for querying the database.
+2. SessionHeader:
+	* Username and session ID attributes.
+3. Utils:
+	* Keys, file paths, JavaScript input, and encrypted data.
+4. WebUtils:
+	* Cookies (name-value pairs), HTTP requests, and socket connections.

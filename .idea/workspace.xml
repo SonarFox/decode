@@ -5,9 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="c92cd61f-8bfd-4abc-86da-813043720126" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/explainers/architecture_diagram_mermaid_image.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/code_rap.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/explainers/functional_gap_analysis.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
