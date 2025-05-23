@@ -1,77 +1,256 @@
-# explainers/uml_class_diagram_mermaid_image.py
-# (Formerly uml_class_diagram_mermaid.py - now generates an image)
+# explainers/uml_class_diagram.py
 import os
 import ollama
-import sys      # For stderr
-import re       # For cleanup
-import subprocess # To call Mermaid CLI
-import tempfile   # For temporary files
-import shutil     # To check if mmdc is in PATH
+import graphviz  # Requires graphviz Python library and system installation
+import sys  # For stderr
+import re  # Import regular expressions
+import html  # For escaping HTML characters in labels
 
 try:
     import google.generativeai as genai
+
     GEMINI_AVAILABLE_FOR_EXPLAINER = True
 except ImportError:
     GEMINI_AVAILABLE_FOR_EXPLAINER = False
 
-# This explainer does NOT require Graphviz, but DOES require Mermaid CLI (mmdc)
-# REQUIRES_MMDC = True # We can add a flag if the main script needs to check
+OUTPUT_FILENAME_BASE = "uml_class_diagram_output"  # Default if not called from web app
+OUTPUT_FORMAT = "png"
+REQUIRES_GRAPHVIZ = True
 
-OUTPUT_FILENAME_BASE = "uml_class_diagram_mermaid_output" # Base name for the output image
-OUTPUT_FORMAT = "png" # Desired image format (mmdc supports png, svg, pdf)
 
-def is_mmdc_available():
-    """Checks if the Mermaid CLI (mmdc) is available in the system PATH."""
-    return shutil.which("mmdc") is not None
+def escape_html_for_dot(text):
+    if not isinstance(text, str): text = str(text)
+    return html.escape(text)
+
+
+def parse_llm_class_structure(llm_output_text):
+    """
+    Parses a structured text output from LLM into a list of classes
+    with their attributes and methods.
+    """
+    # print("--- LLM Structured Output to Parse ---", file=sys.stderr) # Keep for deep debugging if needed
+    # print(llm_output_text, file=sys.stderr)
+    # print("--- End of LLM Structured Output ---", file=sys.stderr)
+
+    classes = {}
+    relationships = []
+    current_class_name = None
+    parsing_section = None  # None, "ATTRIBUTES", "METHODS"
+
+    cleaned_llm_output = llm_output_text.strip()
+    lines_for_parsing = cleaned_llm_output.splitlines()
+    start_index = 0
+    for i, line in enumerate(lines_for_parsing):
+        stripped_line_lower = line.strip().lower()
+        if stripped_line_lower.startswith("class:") or \
+                stripped_line_lower.startswith("**class:") or \
+                stripped_line_lower.startswith("relationship:") or \
+                stripped_line_lower.startswith("**relationship:"):
+            start_index = i
+            break
+    llm_output_text_to_parse = "\n".join(lines_for_parsing[start_index:])
+
+    if llm_output_text_to_parse.startswith("```") and llm_output_text_to_parse.endswith("```"):
+        temp_lines = llm_output_text_to_parse.splitlines()
+        if temp_lines and temp_lines[0].startswith("```"):
+            temp_lines.pop(0)
+        if temp_lines and temp_lines[-1] == "```":
+            temp_lines.pop()
+        llm_output_text_to_parse = "\n".join(temp_lines)
+
+    for line in llm_output_text_to_parse.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        class_match = re.match(r"(?:\*\*)?CLASS:(?:\*\*)?\s*([a-zA-Z_][\w.]*)", line, re.IGNORECASE)
+        attrs_match = re.match(r"(?:\*\*)?ATTRIBUTES:(?:\*\*)?", line, re.IGNORECASE)
+        methods_match = re.match(r"(?:\*\*)?METHODS:(?:\*\*)?", line, re.IGNORECASE)
+        rel_match = re.match(
+            r"(?:\*\*)?RELATIONSHIP:(?:\*\*)?\s*([a-zA-Z_][\w.]*)\s*->\s*([a-zA-Z_][\w.]*)\s*\[type=(\w+)(?:,\s*label=\"(.*?)\")?\]",
+            line, re.IGNORECASE)
+        rel_none_match = re.match(r"(?:\*\*)?RELATIONSHIP:(?:\*\*)?\s*None", line, re.IGNORECASE)
+        separator_match = re.match(r"---", line)
+
+        if class_match:
+            current_class_name = class_match.group(1)
+            if current_class_name not in classes:
+                classes[current_class_name] = {"attributes": [], "methods": []}
+            parsing_section = None
+            # print(f"Parser: Found CLASS: {current_class_name}", file=sys.stderr)
+        elif attrs_match and current_class_name:
+            parsing_section = "ATTRIBUTES"
+            # print(f"Parser: Switched to ATTRIBUTES for {current_class_name}", file=sys.stderr)
+        elif methods_match and current_class_name:
+            parsing_section = "METHODS"
+            # print(f"Parser: Switched to METHODS for {current_class_name}", file=sys.stderr)
+        elif rel_none_match:
+            # print(f"Parser: Found 'RELATIONSHIP: None', skipping.", file=sys.stderr)
+            parsing_section = None
+        elif rel_match:
+            source, target, rel_type, label = rel_match.groups()
+            relationships.append({"source": source, "target": target, "type": rel_type.lower(), "label": label or ""})
+            # print(f"Parser: Found RELATIONSHIP: {source} -> {target}", file=sys.stderr)
+            parsing_section = None
+        elif separator_match:
+            # print(f"Parser: Found separator ---, resetting current class context.", file=sys.stderr)
+            current_class_name = None
+            parsing_section = None
+        elif current_class_name and parsing_section:
+            member_line = line.strip()
+            if member_line and not member_line.lower().startswith("(no ") and not member_line.lower().startswith(
+                    "omitted"):
+                if parsing_section == "ATTRIBUTES":
+                    classes[current_class_name]["attributes"].append(member_line)
+                    # print(f"Parser: Added attribute to {current_class_name}: {member_line}", file=sys.stderr)
+                elif parsing_section == "METHODS":
+                    classes[current_class_name]["methods"].append(member_line)
+                    # print(f"Parser: Added method to {current_class_name}: {member_line}", file=sys.stderr)
+            # else:
+            # print(f"Parser: Skipping empty or placeholder member line for {current_class_name}: '{member_line}'", file=sys.stderr)
+
+    # print("--- Parsed Classes Dictionary (before returning) ---", file=sys.stderr)
+    # import json
+    # print(json.dumps(classes, indent=2), file=sys.stderr)
+    # print("--- End of Parsed Classes Dictionary ---", file=sys.stderr)
+
+    return classes, relationships
+
+
+def generate_dot_from_structure(class_data, relationships_data):
+    dot_lines = [
+        'digraph UMLClassDiagram {',
+        '  rankdir=TB;',
+        '  graph [concentrate=true];',
+        '  node [shape=none, margin=0, fontname="Helvetica"];',
+        '  edge [fontname="Helvetica", fontsize=10];',
+        ''
+    ]
+    if not class_data:
+        dot_lines.append('  label="No class information parsed from LLM output.";')
+        dot_lines.append('  fontsize=16;')
+        dot_lines.append('}')
+        return "\n".join(dot_lines)
+
+    for class_name, members in class_data.items():
+        node_id = f"{escape_html_for_dot(class_name)}_Node"
+
+        attributes_html_list = []
+        if members.get("attributes"):
+            for attr in members["attributes"]:
+                attributes_html_list.append(f"{escape_html_for_dot(attr)}")
+        attributes_html_content = "<BR ALIGN=\"LEFT\"/>".join(
+            attributes_html_list) if attributes_html_list else "<I>No attributes</I>"
+
+        methods_html_list = []
+        if members.get("methods"):
+            for meth in members["methods"]:
+                methods_html_list.append(f"{escape_html_for_dot(meth)}")
+        methods_html_content = "<BR ALIGN=\"LEFT\"/>".join(
+            methods_html_list) if methods_html_list else "<I>No methods</I>"
+
+        label = f'''<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="5">
+          <TR><TD BGCOLOR="lightblue" ALIGN="CENTER"><B>{escape_html_for_dot(class_name)}</B></TD></TR>
+          <TR><TD ALIGN="LEFT" VALIGN="TOP">{attributes_html_content}</TD></TR>
+          <TR><TD ALIGN="LEFT" VALIGN="TOP">{methods_html_content}</TD></TR>
+        </TABLE>>'''
+        dot_lines.append(f'  {node_id} [label={label}];')
+
+    dot_lines.append('')
+    for rel in relationships_data:
+        if rel['source'] in class_data and rel['target'] in class_data:
+            source_node = f"{escape_html_for_dot(rel['source'])}_Node"
+            target_node = f"{escape_html_for_dot(rel['target'])}_Node"
+            attrs = []
+            if rel['type'] == "inheritance":
+                attrs.append("arrowhead=empty, style=solid")
+            elif rel['type'] == "aggregation":
+                attrs.append('arrowhead=odiamond, style=solid, label="has a"')
+            elif rel['type'] == "composition":
+                attrs.append('arrowhead=diamond, style=solid, label="owns a"')
+            elif rel['type'] == "association" or rel['type'] == "dependency":
+                attrs.append('arrowhead=open, style=dashed')
+                if rel['label']: attrs.append(f'label="{escape_html_for_dot(rel["label"])}"')
+            if attrs: dot_lines.append(f"  {source_node} -> {target_node} [{', '.join(attrs)}];")
+        else:
+            print(
+                f"Warning [uml_class_diagram]: Skipping relationship: {rel['source']} or {rel['target']} not in parsed classes.",
+                file=sys.stderr)
+    dot_lines.append('}')
+    return "\n".join(dot_lines)
+
 
 def explain(base_explanation, llm_client, model_name, provider, original_code, **kwargs):
-    """
-    Asks the LLM to generate a UML Class Diagram in Mermaid syntax,
-    then attempts to render it to an image file using the Mermaid CLI (mmdc).
+    print("Explainer [uml_class_diagram]: Requesting structured class information from LLM...")
 
-    Args:
-        base_explanation (str): The initial detailed explanation text.
-        llm_client: The initialized LLM client instance (Ollama client or None for Gemini).
-        model_name (str): The name of the LLM model to use.
-        provider (str): The LLM provider ('ollama' or 'gemini').
-        original_code (str): The original source code (essential for class structure).
-        **kwargs: Accepts other potential arguments. Expected: 'api_key' if provider is 'gemini'.
+    # *** DEBUG: Print received kwargs to check for target_output_file_base ***
+    print(f"DEBUG [uml_class_diagram]: Received kwargs: {kwargs.keys()}", file=sys.stderr)
+    if 'target_output_file_base' in kwargs:
+        print(f"DEBUG [uml_class_diagram]: target_output_file_base from kwargs: {kwargs['target_output_file_base']}",
+              file=sys.stderr)
+    else:
+        print(f"DEBUG [uml_class_diagram]: 'target_output_file_base' NOT FOUND in kwargs. Using default.",
+              file=sys.stderr)
+    # *** END DEBUG ***
 
-    Returns:
-        str: A success message with the image file path, the Mermaid syntax if rendering fails
-             but syntax was generated, or an error message.
-    """
-    print("Explainer [uml_class_diagram_mermaid_image]: Requesting Mermaid syntax for UML Class Diagram from LLM...")
-
-    # Corrected prompt: Removed "visibility" keyword from member definitions.
-    # Emphasized using only +, -, # for visibility.
+    # Prompt for structured text (same as before)
     prompt = f"""
-Based on the following detailed code analysis AND the original source code, generate a UML Class Diagram description using **Mermaid class diagram syntax**.
+Based on the following detailed code analysis AND the original source code, extract information about classes, their attributes, methods, and relationships.
 
-Identify key classes, their attributes (fields/variables with types), and methods (functions with parameters and return types). Also, identify relationships like inheritance, aggregation, composition, and association.
+**Output Format (Strictly follow this text-based format):**
+For each class, provide its details in a block like this:
 
-**Mermaid Class Diagram Syntax Guidelines:**
-* Start with `classDiagram`.
-* Define classes like:
-  ```mermaid
-  class ClassName {{
-    +attributeName: attributeType  // Use + for public, - for private, # for protected
-    -anotherAttribute: anotherType
-    #protectedAttribute: type
+CLASS: ClassName
+ATTRIBUTES:
+[+-#] attributeName1: typeName
+[+-#] attributeName2: typeName
+... (If no attributes, you can omit the ATTRIBUTES: line and its content for that class, or write "ATTRIBUTES:" followed by "(No attributes for this class)")
+METHODS:
+[+-#] methodName1(param1: type, param2: type): returnType
+[+-#] methodName2(): void
+... (If no methods, you can omit the METHODS: line and its content for that class, or write "METHODS:" followed by "(No methods for this class)")
+--- (Use three hyphens as a separator before the next class block OR before relationships section)
 
-    +methodName(paramType paramName, ...): returnType // Use + for public, - for private, # for protected
-    -anotherMethod(param: type): void
-    #protectedMethod()
-  }}
-  ```
-  (If type has generics like List<String>, use `List~String~` or `List_String_` if `List<String>` causes issues in your Mermaid renderer, otherwise `List<String>` is often fine. For parameters, list type then name, e.g., `int id`.)
-* Relationships:
-    * Inheritance (ClassA inherits from ClassB): `ClassB <|-- ClassA`
-    * Composition (ClassA owns ClassB): `ClassA *-- ClassB : owns`
-    * Aggregation (ClassA has ClassB): `ClassA o-- ClassB : has a`
-    * Association (ClassA uses ClassB): `ClassA --> ClassB : uses`
-    * Dependency (ClassA depends on ClassB): `ClassA ..> ClassB : depends on`
-* Keep the diagram focused on the most important classes and relationships.
+After all classes, list relationships (if any):
+RELATIONSHIP: SourceClassName -> TargetClassName [type=inheritance]
+RELATIONSHIP: SourceClassName -> TargetClassName [type=aggregation, label="has a"]
+RELATIONSHIP: SourceClassName -> TargetClassName [type=composition, label="owns a"]
+RELATIONSHIP: SourceClassName -> TargetClassName [type=association, label="uses method of"]
+RELATIONSHIP: SourceClassName -> TargetClassName [type=dependency, label="depends on type"]
+(If no relationships, you can write "RELATIONSHIP: None" or omit the RELATIONSHIP section entirely)
+
+
+**Details for Attributes and Methods:**
+* Start each line with visibility: `+` (public), `-` (private), `#` (protected). Default to `+` if unclear.
+* Attributes: `visibility attributeName: typeName`
+* Methods: `visibility methodName(parameterName1: parameterType1, ...): returnType`. Use `void` if no return type.
+* For generic types like `List<String>`, represent them as `List<String>` in your output. My parser will handle HTML escaping later.
+
+**Example Output:**
+CLASS: User
+ATTRIBUTES:
+- userId: int
++ username: String
+METHODS:
++ getProfile(): Profile
++ setUsername(newName: String): void
+---
+CLASS: Profile
+ATTRIBUTES:
++ email: String
+- lastLogin: Date
+METHODS:
++ updateEmail(newEmail: String): boolean
+---
+CLASS: OrderService
+ATTRIBUTES:
+(No attributes for this class)
+METHODS:
++ placeOrder(order: Order): boolean
+---
+RELATIONSHIP: User -> Profile [type=association, label="has profile"]
+RELATIONSHIP: None 
 
 --- Detailed Analysis Start ---
 {base_explanation}
@@ -81,151 +260,81 @@ Identify key classes, their attributes (fields/variables with types), and method
 {original_code}
 --- Original Source Code End ---
 
-Provide *ONLY* the Mermaid class diagram syntax code block itself, starting with `classDiagram`.
-Do not include any other explanatory text or markdown fences like \`\`\`mermaid.
-
-**Example Mermaid Output (just the syntax, no fences):**
-classDiagram
-  class Animal {{
-    +String name
-    +int age
-    +getName(): String
-    +setAge(int age): void
-  }}
-  class Dog {{
-    +String breed
-    +bark(): void
-  }}
-  class Cat {{
-    +String color
-    +meow(): void
-  }}
-
-  Animal <|-- Dog
-  Animal <|-- Cat
-  Dog --> Cat : chases
-
-Mermaid Syntax Output (ONLY the syntax):
+Structured Class Information Output:
 """
-
-    mermaid_syntax_from_llm = ""
+    llm_structured_output = ""
     try:
-        # --- Step 1: Get Mermaid syntax from LLM ---
         if provider == 'ollama':
             if not llm_client or not isinstance(llm_client, ollama.Client):
-                 return "Error [uml_class_diagram_mermaid_image]: Invalid or missing Ollama client."
+                return "Error [uml_class_diagram]: Invalid or missing Ollama client."
             response = llm_client.chat(
                 model=model_name,
                 messages=[{'role': 'user', 'content': prompt}],
-                options={'temperature': 0.0} # Very low temperature for structured output
+                options={'temperature': 0.0, 'num_ctx': 8192}
             )
             if response and hasattr(response, 'message') and hasattr(response.message, 'content'):
-                mermaid_syntax_from_llm = response.message.content
+                llm_structured_output = response.message.content
             else:
-                return f"Error [uml_class_diagram_mermaid_image]: Unexpected Ollama response. Raw: {response}"
-
+                return f"Error [uml_class_diagram]: Unexpected Ollama response. Raw: {response}"
         elif provider == 'gemini':
-            if not GEMINI_AVAILABLE_FOR_EXPLAINER:
-                return "Error [uml_class_diagram_mermaid_image]: Gemini library not available."
-            api_key_for_gemini = kwargs.get('api_key') or os.getenv("GEMINI_API_KEY")
-            if not api_key_for_gemini:
-                 return "Error [uml_class_diagram_mermaid_image]: Gemini API key not available."
-
-            genai.configure(api_key=api_key_for_gemini)
-            gemini_model = genai.GenerativeModel(model_name)
-            response = gemini_model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.0)) # type: ignore
-
-            explanation_text = ""
-            if response and hasattr(response, 'text'):
-                explanation_text = response.text
+            if not GEMINI_AVAILABLE_FOR_EXPLAINER: return "Error [uml_class_diagram]: Gemini library not available."
+            api_key = kwargs.get('api_key') or os.getenv("GEMINI_API_KEY")
+            if not api_key: return "Error [uml_class_diagram]: Gemini API key not available."
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.0))
+            if response and hasattr(response, 'text') and response.text:
+                llm_structured_output = response.text
             elif response and hasattr(response, 'parts') and response.parts:
-                 explanation_text = "".join(part.text for part in response.parts if hasattr(part, 'text'))
-
-            if explanation_text:
-                mermaid_syntax_from_llm = explanation_text
+                llm_structured_output = "".join(p.text for p in response.parts if hasattr(p, 'text'))
             else:
-                 feedback_info = ""
-                 try:
-                     if hasattr(response, 'prompt_feedback'): feedback_info += f" Prompt Feedback: {response.prompt_feedback}"
-                     if hasattr(response, 'candidates') and response.candidates:
-                          feedback_info += f" Finish Reason: {response.candidates[0].finish_reason}" # type: ignore
-                 except Exception: pass
-                 return f"Error [uml_class_diagram_mermaid_image]: Could not extract Mermaid syntax from Gemini.{feedback_info}"
+                return f"Error [uml_class_diagram]: Could not extract structured data from Gemini. {str(response)[:200]}"
         else:
-            return f"Error [uml_class_diagram_mermaid_image]: Unknown provider '{provider}'."
+            return f"Error [uml_class_diagram]: Unknown provider '{provider}'."
 
-        # --- Cleanup Mermaid syntax ---
-        match = re.search(r"```(?:mermaid)?\s*(classDiagram[\s\S]*?)\s*```", mermaid_syntax_from_llm, re.IGNORECASE)
-        cleaned_syntax = ""
-        if match:
-            cleaned_syntax = match.group(1).strip()
-        else:
-            temp_syntax = mermaid_syntax_from_llm.strip()
-            if temp_syntax.lower().startswith("classdiagram"):
-                cleaned_syntax = temp_syntax
-            else:
-                lines = mermaid_syntax_from_llm.splitlines()
-                for i, line in enumerate(lines):
-                    if line.strip().lower().startswith("classdiagram"):
-                        cleaned_syntax = "\n".join(lines[i:]).strip()
-                        break
-                if not cleaned_syntax:
-                    print(f"Warning [uml_class_diagram_mermaid_image]: LLM output doesn't appear to contain Mermaid class diagram syntax:\n---\n{mermaid_syntax_from_llm}\n---", file=sys.stderr)
-                    return f"Error [uml_class_diagram_mermaid_image]: LLM did not return valid Mermaid syntax. Output started with: '{mermaid_syntax_from_llm[:100]}...'"
+        if not llm_structured_output.strip():
+            return "Error [uml_class_diagram]: LLM returned empty structured information."
 
+        parsed_classes, parsed_relationships = parse_llm_class_structure(llm_structured_output)
+        if not parsed_classes:
+            print(
+                f"Warning [uml_class_diagram]: Could not parse ANY class structures from LLM output. The LLM output likely did not follow the expected format (CLASS:, ATTRIBUTES:, METHODS:, ---).",
+                file=sys.stderr)
+            return "Error [uml_class_diagram]: Failed to parse class structure from LLM output. Check console for LLM's raw structured text."
 
-        if not cleaned_syntax.lower().startswith('classdiagram'):
-            print(f"Warning [uml_class_diagram_mermaid_image]: LLM output after cleanup doesn't look like Mermaid syntax:\n---\n{cleaned_syntax}\n---", file=sys.stderr)
-            print(f"Original LLM output was:\n---\n{mermaid_syntax_from_llm}\n---", file=sys.stderr)
-            return f"Error [uml_class_diagram_mermaid_image]: LLM did not return valid Mermaid syntax for Class Diagram. Cleaned output started with: '{cleaned_syntax[:100]}...'"
+        dot_source = generate_dot_from_structure(parsed_classes, parsed_relationships)
 
-        # --- Step 2: Render Mermaid syntax to an image file ---
-        if not is_mmdc_available():
-            error_msg = "Error [uml_class_diagram_mermaid_image]: Mermaid CLI (mmdc) not found in PATH. Cannot generate image.\n"
-            error_msg += "Please install Node.js and then '@mermaid-js/mermaid-cli' (e.g., 'npm install -g @mermaid-js/mermaid-cli').\n"
-            error_msg += "Returning Mermaid syntax instead:\n\n```mermaid\n" + cleaned_syntax + "\n```"
-            print(error_msg, file=sys.stderr)
-            return error_msg
+        # *** Use the target_output_file_base from kwargs if provided by app.py ***
+        # This filename is the base path, graphviz.render() will append the .png (or other format)
+        target_file_base_for_render = kwargs.get('target_output_file_base', OUTPUT_FILENAME_BASE)
+        print(f"DEBUG [uml_class_diagram]: Using target_file_base_for_render: {target_file_base_for_render}",
+              file=sys.stderr)
 
+        print(f"Explainer [uml_class_diagram]: Rendering DOT source to image...")
         try:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".mmd", delete=False, encoding='utf-8') as tmp_file:
-                tmp_file.write(cleaned_syntax)
-                tmp_file_path = tmp_file.name
+            output_dir = os.path.dirname(target_file_base_for_render)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+                print(f"Created output directory for explainer: {output_dir}", file=sys.stderr)
 
-            output_file_path = f"{OUTPUT_FILENAME_BASE}.{OUTPUT_FORMAT}"
-            cmd = [
-                "mmdc",
-                "-i", tmp_file_path,
-                "-o", output_file_path,
-                "-b", "white", # Set background color for better contrast
-            ]
+            # The `filename` parameter to Source is the base for output files.
+            # `render` will create `target_file_base_for_render` (dot source) and `target_file_base_for_render.png`
+            graph = graphviz.Source(dot_source, filename=target_file_base_for_render, format=OUTPUT_FORMAT,
+                                    engine='dot')
+            output_path_from_render = graph.render(cleanup=True, view=False)
+            # output_path_from_render will be target_file_base_for_render + "." + OUTPUT_FORMAT
 
-            print(f"Explainer [uml_class_diagram_mermaid_image]: Rendering Mermaid diagram to {output_file_path} using command: {' '.join(cmd)}")
-            process = subprocess.run(cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+            print(
+                f"Explainer [uml_class_diagram]: Successfully rendered UML Class Diagram to {output_path_from_render}")
+            return f"Success: UML Class Diagram saved to: {output_path_from_render}"  # Return absolute path
 
-            os.unlink(tmp_file_path) # Clean up temporary file
-
-            if process.returncode == 0:
-                abs_output_path = os.path.abspath(output_file_path)
-                print(f"Explainer [uml_class_diagram_mermaid_image]: Successfully rendered UML Class Diagram.")
-                return f"Success: Mermaid UML Class Diagram image saved to: {abs_output_path}"
-            else:
-                error_message = f"Error [uml_class_diagram_mermaid_image]: Failed to render Mermaid diagram with mmdc.\n"
-                error_message += f"Return Code: {process.returncode}\n"
-                if process.stdout: error_message += f"Stdout: {process.stdout.strip()}\n"
-                if process.stderr: error_message += f"Stderr: {process.stderr.strip()}\n"
-                error_message += "Please ensure Node.js and @mermaid-js/mermaid-cli are correctly installed and mmdc is in your PATH.\n"
-                error_message += "Returning Mermaid syntax instead:\n\n```mermaid\n" + cleaned_syntax + "\n```"
-                print(error_message, file=sys.stderr)
-                return error_message
-
-        except Exception as e:
-            error_message = f"Error [uml_class_diagram_mermaid_image]: An unexpected error occurred during Mermaid image rendering: {e}\n"
-            error_message += "Returning Mermaid syntax instead:\n\n```mermaid\n" + cleaned_syntax + "\n```"
-            print(error_message, file=sys.stderr)
-            return error_message
-
+        except graphviz.exceptions.ExecutableNotFound:
+            return "Error: Graphviz executable not found. Please install Graphviz system-wide."
+        except Exception as render_err:
+            print(f"Error [uml_class_diagram]: Failed to render DOT source: {render_err}", file=sys.stderr)
+            print(f"--- Generated DOT Source Attempted ---\n{dot_source}\n--------------------------", file=sys.stderr)
+            return f"Error: Failed to render UML Class Diagram image. Details: {render_err}"
 
     except Exception as e:
-        return f"Error [uml_class_diagram_mermaid_image]: Exception during LLM call ({provider}, model: {model_name}) for Mermaid syntax: {type(e).__name__}: {e}"
+        return f"Error [uml_class_diagram]: Exception during processing: {type(e).__name__}: {e}"
 

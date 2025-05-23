@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Code Explainer</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        input[type="text"], input[type="file"], select, textarea {
+            width: calc(100% - 22px); padding: 10px; margin-top: 5px; border: 1px solid #ddd;
+            border-radius: 4px; box-sizing: border-box;
+        }
+        input[type="submit"], .button {
+            background-color: #007bff; color: white; padding: 10px 15px; border: none;
+            border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 20px;
+        }
+        input[type="submit"]:hover, .button:hover { background-color: #0056b3; }
+        .button.reset { background-color: #6c757d; }
+        .button.reset:hover { background-color: #545b62; }
+        .result-box { margin-top: 20px; padding: 15px; border: 1px solid #eee; border-radius: 4px; background-color: #f9f9f9; white-space: pre-wrap; word-wrap: break-word; }
+        .flash-messages { list-style: none; padding: 0; }
+        .flash-messages li { padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+        .flash-messages .danger { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .flash-messages .warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        .flash-messages .info { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        .flash-messages .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .form-group { margin-bottom: 15px; }
+        .form-section { border: 1px solid #eee; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        .form-section h3 { margin-top: 0; }
+        img.diagram { max-width: 100%; height: auto; border: 1px solid #ddd; margin-top: 10px; }
+        pre { background-color: #eef; padding: 10px; border-radius: 4px; overflow-x: auto;}
+        .security-warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 15px; margin-bottom: 20px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Code Explainer Web App</h1>
+
+        <div class="security-warning">
+            <strong>Security Note:</strong> The "Source Code Path" field allows this application to access local server files.
+            This is a significant security risk if the application is exposed to untrusted users or the internet.
+            Use only with trusted, local paths on your own machine. The "Requirements File" will be uploaded to the server.
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <ul class="flash-messages">
+                {% for category, message in messages %}
+                    <li class="{{ category }}">{{ message }}</li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('index') }}" enctype="multipart/form-data">
+            <div class="form-section">
+                <h3>Input Code & Requirements</h3>
+                <div class="form-group">
+                    <label for="source_path">Source Code Path (File or Directory on Server):</label>
+                    <input type="text" id="source_path" name="source_path" value="{{ form_data.source_path or '' }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="requirements_file">Upload Requirements File (Optional, .txt or .md file):</label>
+                    <input type="file" id="requirements_file" name="requirements_file" accept=".txt,.md">
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>LLM Configuration</h3>
+                <div class="form-group">
+                    <label for="llm_provider">LLM Provider:</label>
+                    <select id="llm_provider" name="llm_provider">
+                        <option value="ollama" {% if form_data.llm_provider == 'ollama' or not form_data.llm_provider %}selected{% endif %}>Ollama (Local)</option>
+                        <option value="gemini" {% if form_data.llm_provider == 'gemini' %}selected{% endif %}>Google Gemini</option>
+                    </select>
+                </div>
+                <div id="ollama_config">
+                    <div class="form-group">
+                        <label for="ollama_model">Ollama Model:</label>
+                        <input type="text" id="ollama_model" name="ollama_model" value="{{ form_data.ollama_model or 'llama3' }}">
+                    </div>
+                </div>
+                <div id="gemini_config" style="display: {% if form_data.llm_provider == 'gemini' %}block{% else %}none{% endif %};">
+                    <div class="form-group">
+                        <label for="gemini_model">Gemini Model:</label>
+                        <input type="text" id="gemini_model" name="gemini_model" value="{{ form_data.gemini_model or 'gemini-1.5-flash' }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="gemini_api_key">Gemini API Key (or set {{ GEMINI_API_KEY_ENV_VAR }} env var):</label>
+                        <input type="text" id="gemini_api_key" name="gemini_api_key" value="{{ form_data.gemini_api_key or '' }}">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>Explanation Format</h3>
+                <div class="form-group">
+                    <label for="explainer">Choose Explanation Format:</label>
+                    <select id="explainer" name="explainer" required>
+                        {% for name, display_name in explainers %}
+                            <option value="{{ name }}" {% if form_data.explainer == name %}selected{% endif %}>{{ display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <input type="submit" value="Explain Code">
+            <a href="{{ url_for('index') }}" class="button reset">Reset Form</a>
+        </form>
+
+        {% if base_explanation and not base_explanation.startswith('Error:') %}
+            <h2>Base LLM Explanation:</h2>
+            <div class="result-box">
+                <pre>{{ base_explanation }}</pre>
+            </div>
+        {% endif %}
+
+        {% if result %}
+            <h2>Final Output from '{{ (form_data.explainer or '').replace('_', ' ') | title }}' Explainer:</h2>
+            <div class="result-box">
+                {% if result.type == 'image' %}
+                    <p>{{ result.message }}</p>
+                    <img src="{{ result.path }}" alt="Generated Diagram" class="diagram">
+                {% elif result.type == 'text' %}
+                    <pre>{{ result.content }}</pre>
+                {% else %}
+                     <pre>{{ result }}</pre> {# Fallback for older string results #}
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+
+    <script>
+        document.getElementById('llm_provider').addEventListener('change', function() {
+            var ollamaConfig = document.getElementById('ollama_config');
+            var geminiConfig = document.getElementById('gemini_config');
+            if (this.value === 'gemini') {
+                ollamaConfig.style.display = 'none';
+                geminiConfig.style.display = 'block';
+            } else {
+                ollamaConfig.style.display = 'block';
+                geminiConfig.style.display = 'none';
+            }
+        });
+        // Trigger change on load to set initial visibility
+        document.getElementById('llm_provider').dispatchEvent(new Event('change'));
+    </script>
+</body>
+</html>
